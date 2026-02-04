@@ -17,7 +17,14 @@ from .auth import verify_auth
 from .protocol import TaskRecord, TaskRequest, TaskResult, TaskStatus, SUBMIT_TASK_SCHEMA
 from .resources import ResourceTracker, parse_codex_tokens, parse_gemini_tokens
 from .storage import TaskStorage
-from .shared_memory import log_agent_event, share_fact, get_shared_context, record_handoff
+from .shared_memory import (
+    log_agent_event, share_fact, get_shared_context, record_handoff,
+    share_lesson, get_lessons_for_domain, get_agent_lessons, search_lessons,
+)
+from .context_builder import (
+    build_task_context, record_agent_performance, get_agent_performance,
+    get_best_agent_for_task,
+)
 from .notifications import check_notifications, acknowledge_notification, notify_completion
 
 
@@ -112,7 +119,10 @@ class BaseAgentServer:
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["log_event", "share_fact", "get_context", "record_handoff"],
+                                "enum": [
+                                    "log_event", "share_fact", "get_context", "record_handoff",
+                                    "share_lesson", "get_lessons", "search_lessons", "get_agent_lessons",
+                                ],
                             },
                             "agent_name": {"type": "string"},
                             "event_type": {"type": "string"},
@@ -127,6 +137,33 @@ class BaseAgentServer:
                             "to_agent": {"type": "string"},
                             "task_id": {"type": "string"},
                             "reason": {"type": "string"},
+                            "domain": {"type": "string"},
+                            "lesson": {"type": "string"},
+                            "context": {"type": "string"},
+                            "query": {"type": "string"},
+                        },
+                        "required": ["action"],
+                    },
+                ),
+                Tool(
+                    name="agent_performance",
+                    description="Track and query agent performance on task types.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["record", "get_stats", "best_for_task"],
+                            },
+                            "agent_name": {"type": "string"},
+                            "task_type": {"type": "string"},
+                            "success": {"type": "boolean"},
+                            "duration_seconds": {"type": "number"},
+                            "tokens_used": {"type": "integer"},
+                            "available_agents": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
                         },
                         "required": ["action"],
                     },
@@ -163,6 +200,8 @@ class BaseAgentServer:
                     result = self.agent_resources()
                 elif name == "agent_memory":
                     result = self.agent_memory(arguments)
+                elif name == "agent_performance":
+                    result = self.agent_performance(arguments)
                 elif name == "check_notifications":
                     result = self.check_agent_notifications(arguments)
                 else:
@@ -238,6 +277,53 @@ class BaseAgentServer:
                 args.get("task_id", ""),
                 args.get("reason"),
             )
+        if action == "share_lesson":
+            return share_lesson(
+                args.get("agent_name", "unknown"),
+                args.get("domain", "general"),
+                args.get("lesson", ""),
+                args.get("context"),
+            )
+        if action == "get_lessons":
+            return {
+                "lessons": get_lessons_for_domain(
+                    args.get("domain", "general"),
+                    int(args.get("limit", 10)),
+                )
+            }
+        if action == "search_lessons":
+            return {
+                "lessons": search_lessons(
+                    args.get("query", ""),
+                    int(args.get("limit", 10)),
+                )
+            }
+        if action == "get_agent_lessons":
+            return {
+                "lessons": get_agent_lessons(
+                    args.get("agent_name", "unknown"),
+                    int(args.get("limit", 10)),
+                )
+            }
+        return {"error": f"Unknown action: {action}"}
+
+    def agent_performance(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Track and query agent performance."""
+        action = args.get("action")
+        if action == "record":
+            return record_agent_performance(
+                args.get("agent_name", "unknown"),
+                args.get("task_type", "general"),
+                args.get("success", True),
+                args.get("duration_seconds", 0.0),
+                args.get("tokens_used", 0),
+            )
+        if action == "get_stats":
+            return get_agent_performance(args.get("agent_name", "unknown"))
+        if action == "best_for_task":
+            agents = args.get("available_agents", ["codex", "gemini"])
+            best = get_best_agent_for_task(args.get("task_type", "general"), agents)
+            return {"best_agent": best, "task_type": args.get("task_type", "general")}
         return {"error": f"Unknown action: {action}"}
 
     def check_agent_notifications(self, args: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,66 +1,194 @@
-# Agent-to-Agent MCP Protocol
+# Hexswarm - Agent Coordination Protocol
 
-Standardized MCP servers enabling AI agents (Hex, Codex, Gemini) to communicate with typed request/response and DID authentication.
+AI agents (Hex, Codex, Gemini) communicating via MCP with shared memory, context enrichment, and performance-based routing.
 
 ## Architecture
 
 ```
-┌──────────────┐         ┌──────────────┐         ┌──────────────┐
-│     Hex      │         │    Codex     │         │   Gemini     │
-│ (orchestrator)│         │   (coder)    │         │ (researcher) │
-├──────────────┤         ├──────────────┤         ├──────────────┤
-│ MCP Client   │────────▶│  MCP Server  │         │  MCP Server  │
-│              │────────────────────────────────▶│              │
-│ MCP Server   │◀────────│  (callbacks) │         │  (callbacks) │
-└──────────────┘         └──────────────┘         └──────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         HexMem (SQLite)                          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
+│  │ lessons  │  │  facts   │  │  events  │  │   performance    │ │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+        ▲                ▲                ▲
+        │    shared_memory.py            │
+        └────────────────┼───────────────┘
+                         │
+┌──────────────┐    ┌────┴───────┐    ┌──────────────┐
+│     Hex      │    │  Context   │    │  Smart       │
+│ (orchestrator)│◄───│  Builder   │◄───│  Delegate    │
+├──────────────┤    └────────────┘    └──────────────┘
+│ MCP Server   │
+│              │
+│ MCP Client ──┼──────────────────────────────────────┐
+└──────────────┘                                      │
+        │                                             │
+        ▼                                             ▼
+┌──────────────┐                              ┌──────────────┐
+│    Codex     │                              │   Gemini     │
+│   (coder)    │                              │ (researcher) │
+├──────────────┤                              ├──────────────┤
+│  MCP Server  │                              │  MCP Server  │
+└──────────────┘                              └──────────────┘
 ```
 
 ## Quick Start
 
 ```bash
-# List all agent servers
-mcporter list
+# Smart delegate (auto-selects best agent, enriches context)
+/home/sat/bin/hexswarm/bin/smart-delegate.sh auto code "refactor the storage module"
 
-# Check agent status
+# Query swarm intelligence
+/home/sat/bin/hexswarm/bin/swarm-intel.sh lessons code
+/home/sat/bin/hexswarm/bin/swarm-intel.sh best research
+/home/sat/bin/hexswarm/bin/swarm-intel.sh context "debug the routing issue"
+
+# Direct MCP calls
 mcporter call codex.agent_info
-mcporter call gemini.agent_info
-mcporter call hex.agent_info
-
-# Submit a task
-mcporter call codex.submit_task type=code description="Create a hello world script"
-mcporter call gemini.submit_task type=research description="Find papers on Lightning routing"
+mcporter call hex.agent_performance action=get_stats agent_name=codex
 ```
 
-## Tools
+## Features
 
-Each agent exposes these standard tools:
+### Context Enrichment
+When delegating tasks, relevant context is auto-injected from HexMem:
+- **Lessons**: What we've learned doing similar work
+- **Facts**: Known information about subjects in the task
+- **Events**: Recent related activity
+
+```bash
+# Preview what context would be injected
+/home/sat/bin/hexswarm/bin/swarm-intel.sh context "optimize channel fees"
+```
+
+### Shared Memory
+Agents can share lessons and query collective knowledge:
+
+```bash
+# Share a lesson
+mcporter call hex.agent_memory action=share_lesson agent_name=codex \
+  domain=code lesson="Always validate inputs" context="Found bug in API handler"
+
+# Search lessons
+mcporter call hex.agent_memory action=search_lessons query="validation"
+
+# Get lessons by domain
+mcporter call hex.agent_memory action=get_lessons domain=code
+```
+
+### Performance Tracking
+Track which agent performs best at which task types:
+
+```bash
+# Record performance
+mcporter call hex.agent_performance action=record \
+  agent_name=codex task_type=code success=true duration_seconds=45
+
+# Get best agent for a task type
+mcporter call hex.agent_performance action=best_for_task task_type=research
+
+# View stats
+mcporter call hex.agent_performance action=get_stats agent_name=codex
+```
+
+### Smart Routing
+`smart-delegate.sh auto` picks the best agent based on:
+1. Historical performance data (if available)
+2. Default routing by task type (code→codex, research→gemini)
+
+### Async Notifications
+For tmux-based delegation, agents call `notify-done.sh` when complete:
+
+```bash
+# Check for completions
+/home/sat/bin/hexswarm/bin/check-completions.sh
+```
+
+## MCP Tools (11 per agent)
 
 | Tool | Description |
 |------|-------------|
 | `agent_info` | Identity, capabilities, status |
 | `agent_status` | Availability, current task, queue depth |
-| `submit_task` | Submit work (blocks until complete in stdio mode) |
+| `submit_task` | Submit work (blocks until complete) |
 | `task_status` | Check task progress |
 | `task_result` | Get completed task output |
 | `cancel_task` | Cancel pending/running task |
+| `agent_resources` | Context/token tracking, capacity |
+| `agent_memory` | Share/query lessons, facts, context |
+| `agent_performance` | Track/query task performance |
+| `check_notifications` | Check for async completions |
 
-## Task Types
+## Memory Actions
 
-- `code` - Write or modify code
-- `research` - Search and analyze information
-- `analysis` - Analyze data or code
-- `general` - General tasks
+`agent_memory` supports these actions:
+
+| Action | Description |
+|--------|-------------|
+| `log_event` | Record an event |
+| `share_fact` | Record a fact (subject-predicate-object) |
+| `get_context` | Search for relevant context |
+| `record_handoff` | Record agent-to-agent handoff |
+| `share_lesson` | Record a lesson learned |
+| `get_lessons` | Get lessons by domain |
+| `search_lessons` | Search lessons by keyword |
+| `get_agent_lessons` | Get lessons by specific agent |
+
+## File Structure
+
+```
+/home/sat/bin/hexswarm/
+├── agent_mcp/
+│   ├── __init__.py
+│   ├── auth.py              # DID verification (stub)
+│   ├── context_builder.py   # HexMem context enrichment
+│   ├── notifications.py     # Async completion notifications
+│   ├── protocol.py          # Task types and schemas
+│   ├── resources.py         # Token/context tracking
+│   ├── server.py            # Base MCP server
+│   ├── shared_memory.py     # HexMem integration
+│   └── storage.py           # Task persistence
+├── servers/
+│   ├── codex_server.py
+│   ├── gemini_server.py
+│   └── hex_server.py
+├── bin/
+│   ├── smart-delegate.sh    # Context-enriched delegation
+│   ├── swarm-intel.sh       # Query swarm knowledge
+│   ├── notify-done.sh       # Completion notifications
+│   └── check-completions.sh # Check for notifications
+└── README.md
+```
+
+## Task Storage
+
+```
+~/.agent/
+├── codex/tasks/{pending,running,completed,failed}/
+├── gemini/tasks/{pending,running,completed,failed}/
+├── hex/tasks/{pending,running,completed,failed}/
+└── notifications/{pending,processed}/
+```
+
+## Agent DIDs
+
+| Agent | DID |
+|-------|-----|
+| Hex | `did:cid:bagaaieratn3qejd6mr4y2bk3nliriafoyeftt74tkl7il6bbvakfdupahkla` |
+| Codex | `did:cid:bagaaierawhtwebyik523xjzhmxgfonrw56ssimutvr2surw3iypvgpjzehoa` |
+| Gemini | `did:cid:bagaaieraafcrruni2vrpp4nmzhwpe2vnjjjuxj2lb5cew76jixjuil7fxoqa` |
 
 ## Configuration
 
-Servers are registered in `~/.mcporter/mcporter.json`:
+Servers registered in `~/.mcporter/mcporter.json`:
 
 ```json
 {
   "mcpServers": {
     "codex": {
       "type": "stdio",
-      "command": "/home/sat/bin/agent-mcp/bin/run-codex-server.sh",
+      "command": "/home/sat/bin/hexswarm/bin/run-codex-server.sh",
       "env": {
         "CODEX_TASK_DIR": "/home/sat/.agent/codex/tasks",
         "CODEX_WORKDIR": "/home/sat/clawd"
@@ -70,48 +198,9 @@ Servers are registered in `~/.mcporter/mcporter.json`:
 }
 ```
 
-## Task Persistence
-
-Tasks are persisted to `~/.agent/<agent>/tasks/`:
-```
-~/.agent/
-├── codex/tasks/
-│   ├── pending/
-│   ├── running/
-│   ├── completed/
-│   └── failed/
-├── gemini/tasks/
-└── hex/tasks/
-```
-
-On server restart, running tasks are marked as failed.
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CODEX_CLI` | `codex` | Path to codex CLI |
-| `CODEX_WORKDIR` | `~/clawd` | Working directory for tasks |
-| `CODEX_TASK_DIR` | `~/.agent/codex/tasks` | Task storage |
-| `CODEX_TASK_TIMEOUT` | `1800` | Max seconds per task |
-| `CODEX_AGENT_DID` | - | Agent's Archon DID |
-
-Same pattern for `GEMINI_*` and `HEX_*`.
-
-## DID Authentication (TODO)
-
-Currently stub auth (accepts all). Future: verify requests against `daemon-collective` group membership.
-
-## Development
-
-```bash
-cd /home/sat/bin/agent-mcp
-source .venv/bin/activate
-python -m servers.codex_server  # Run directly for testing
-```
-
 ## Related
 
-- [Spec](/home/sat/clawd/specs/agent-mcp-protocol.md)
+- [Protocol Spec](/home/sat/clawd/specs/agent-mcp-protocol.md)
+- [HexMem](/home/sat/clawd/hexmem/)
 - [MCP Protocol](https://modelcontextprotocol.io)
 - [Archon DID](https://github.com/archetech/archon)

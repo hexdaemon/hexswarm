@@ -231,3 +231,135 @@ def record_handoff(
         return {"event_id": event_id, "occurred_at": occurred_at}
     except Exception as error:
         return _handle_db_error(error)
+
+
+def share_lesson(
+    agent_name: str,
+    domain: str,
+    lesson: str,
+    context: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record a lesson learned by an agent."""
+    # First log an event, then link the lesson to it
+    source_tag = f"agent:{agent_name}"
+    try:
+        with _connect() as conn:
+            with conn:
+                # Create a source event for the lesson
+                event_cur = conn.execute(
+                    """
+                    INSERT INTO events (event_type, category, summary, details, significance)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    ("lesson_learned", source_tag, f"Learned: {lesson[:100]}", context or "", 5),
+                )
+                event_id = event_cur.lastrowid
+                
+                # Insert the lesson linked to the event
+                cur = conn.execute(
+                    """
+                    INSERT INTO lessons (domain, lesson, context, source_event_id)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (domain, lesson, context or "", event_id),
+                )
+                lesson_id = cur.lastrowid
+                created_at = conn.execute(
+                    "SELECT created_at FROM lessons WHERE id = ?;", (lesson_id,)
+                ).fetchone()[0]
+        return {"lesson_id": lesson_id, "created_at": created_at}
+    except Exception as error:
+        return _handle_db_error(error)
+
+
+def get_lessons_for_domain(domain: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """Get lessons for a specific domain."""
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.id, l.domain, l.lesson, l.context, l.created_at,
+                       e.category as source
+                FROM lessons l
+                LEFT JOIN events e ON e.id = l.source_event_id
+                WHERE lower(l.domain) = lower(?)
+                ORDER BY l.created_at DESC
+                LIMIT ?
+                """,
+                (domain, limit),
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "domain": row["domain"],
+                    "lesson": row["lesson"],
+                    "context": row["context"],
+                    "source": row["source"] or "unknown",
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
+    except Exception as error:
+        return [_handle_db_error(error)]
+
+
+def get_agent_lessons(agent_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """Get lessons learned by a specific agent."""
+    source_category = f"agent:{agent_name}"
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.id, l.domain, l.lesson, l.context, l.created_at
+                FROM lessons l
+                JOIN events e ON e.id = l.source_event_id
+                WHERE e.category = ?
+                ORDER BY l.created_at DESC
+                LIMIT ?
+                """,
+                (source_category, limit),
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "domain": row["domain"],
+                    "lesson": row["lesson"],
+                    "context": row["context"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
+    except Exception as error:
+        return [_handle_db_error(error)]
+
+
+def search_lessons(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """Search lessons by keyword."""
+    like = f"%{query.lower()}%"
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT l.id, l.domain, l.lesson, l.context, l.created_at,
+                       e.category as source
+                FROM lessons l
+                LEFT JOIN events e ON e.id = l.source_event_id
+                WHERE lower(l.lesson) LIKE ? OR lower(l.context) LIKE ? OR lower(l.domain) LIKE ?
+                ORDER BY l.created_at DESC
+                LIMIT ?
+                """,
+                (like, like, like, limit),
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "domain": row["domain"],
+                    "lesson": row["lesson"],
+                    "context": row["context"],
+                    "source": row["source"] or "unknown",
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
+    except Exception as error:
+        return [_handle_db_error(error)]
