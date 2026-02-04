@@ -25,18 +25,45 @@ class TaskStorage:
         return self.base_dir / status.value / f"{task_id}.json"
 
     def write_task(self, record: TaskRecord) -> None:
-        # Remove from all other status directories first
-        for status in TaskStatus:
-            if status != record.status:
-                old_path = self._path_for(record.task_id, status)
-                if old_path.exists():
-                    old_path.unlink()
+        lock_path = self.base_dir / f"{record.task_id}.lock"
         
-        # Write to correct status directory
-        path = self._path_for(record.task_id, record.status)
-        tmp_path = path.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps(record.to_dict(), indent=2))
-        tmp_path.replace(path)
+        # Ensure we have a lock before modifying task files
+        lock_file = open(lock_path, "w")
+        try:
+            retries = 10
+            while retries > 0:
+                try:
+                    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except (IOError, BlockingIOError):
+                    retries -= 1
+                    if retries == 0:
+                        raise RuntimeError(f"Timeout acquiring lock for task {record.task_id}")
+                    time.sleep(0.05)
+
+            # Remove from all other status directories first
+            for status in TaskStatus:
+                if status != record.status:
+                    old_path = self._path_for(record.task_id, status)
+                    if old_path.exists():
+                        old_path.unlink()
+            
+            # Write to correct status directory (Atomic write)
+            path = self._path_for(record.task_id, record.status)
+            tmp_path = path.with_suffix(".json.tmp")
+            
+            with open(tmp_path, "w") as f:
+                json.dump(record.to_dict(), f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            
+            tmp_path.replace(path)
+        finally:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+            except:
+                pass
+            lock_file.close()
 
     def move_task(self, task_id: str, old_status: TaskStatus, new_status: TaskStatus) -> None:
         old_path = self._path_for(task_id, old_status)

@@ -273,20 +273,15 @@ def record_agent_performance(
     try:
         conn = _connect()
         
-        # Store as a fact: agent -> performs_well_at -> task_type (or performs_poorly_at)
+        # Store as a fact: agent -> completed_successfully/failed_at -> task_type
         predicate = "completed_successfully" if success else "failed_at"
         
         conn.execute(
             """
-            INSERT INTO facts (subject_text, predicate, object_text, source, metadata)
-            VALUES (?, ?, ?, 'hexswarm', ?)
+            INSERT INTO facts (subject_text, predicate, object_text, source)
+            VALUES (?, ?, ?, 'hexswarm')
             """,
-            (
-                agent_name,
-                predicate,
-                task_type,
-                f'{{"duration": {duration_seconds}, "tokens": {tokens_used}}}',
-            ),
+            (agent_name, predicate, task_type),
         )
         conn.commit()
         conn.close()
