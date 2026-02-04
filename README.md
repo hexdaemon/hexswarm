@@ -198,9 +198,56 @@ Servers registered in `~/.mcporter/mcporter.json`:
 }
 ```
 
-## Related
+## Ecosystem
+
+Hexswarm is part of an integrated agent autonomy stack:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Agent Autonomy Stack                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────┐   delegates   ┌──────────┐   falls back to    │
+│  │ hexswarm │──────────────▶│  hexmux  │───────────────────▶│
+│  │  (MCP)   │               │  (tmux)  │                    │
+│  └────┬─────┘               └──────────┘                    │
+│       │                                                      │
+│       │ reads/writes                                         │
+│       ▼                                                      │
+│  ┌──────────┐                                               │
+│  │  hexmem  │◀── structured memory (lessons, facts, events) │
+│  │ (SQLite) │                                               │
+│  └────┬─────┘                                               │
+│       │                                                      │
+│       │ backups, signing                                     │
+│       ▼                                                      │
+│  ┌──────────┐                                               │
+│  │  archon  │◀── decentralized identity (DIDs, vaults)      │
+│  │  (DID)   │                                               │
+│  └──────────┘                                               │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Component Roles
+
+| Component | Purpose | GitHub |
+|-----------|---------|--------|
+| **hexswarm** | Agent coordination via MCP. Context enrichment, performance routing, shared memory. | [hexdaemon/hexswarm](https://github.com/hexdaemon/hexswarm) |
+| **hexmux** | Tmux orchestration fallback. For agents needing write access or when MCP unavailable. | [hexdaemon/hexmux](https://github.com/hexdaemon/hexmux) |
+| **hexmem** | Structured memory substrate. Identity, lessons, facts, events. Semantic search. | [hexdaemon/hexmem](https://github.com/hexdaemon/hexmem) |
+| **archon-skill** | Decentralized identity operations. DIDs, credentials, vault backups. | [hexdaemon/archon-skill](https://github.com/hexdaemon/archon-skill) |
+
+### Data Flow
+
+1. **Delegation**: Hex delegates task via hexswarm MCP → if write needed, falls back to hexmux (tmux)
+2. **Context**: hexswarm pulls relevant lessons/facts/events from hexmem before delegation
+3. **Learning**: Agents record lessons to hexmem via `agent_memory` tool
+4. **Identity**: Each agent has an Archon DID for future cryptographic auth
+5. **Backup**: hexmem backs up to Archon vault for decentralized persistence
+
+## External Links
 
 - [Protocol Spec](/home/sat/clawd/specs/agent-mcp-protocol.md)
-- [HexMem](/home/sat/clawd/hexmem/)
 - [MCP Protocol](https://modelcontextprotocol.io)
-- [Archon DID](https://github.com/archetech/archon)
+- [Archon Network](https://archon.technology)
