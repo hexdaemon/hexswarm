@@ -3,7 +3,7 @@
 # Run with: mcporter (stdio) or directly for testing
 
 cd "$(dirname "$0")/.."
-source .venv/bin/activate
+source .venv/bin/activate 2>/dev/null || true
 
 export CODEX_TASK_DIR="${HOME}/.agent/codex/tasks"
 export CODEX_CLI="codex"
@@ -14,4 +14,4 @@ else
     export CODEX_AGENT_DID="${CODEX_AGENT_DID:-did:cid:codex}"
 fi
 
-exec python -m servers.codex_server
+exec python3 -m servers.codex_server

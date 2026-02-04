@@ -8,7 +8,7 @@ STATUS="${3:-completed}"
 SUMMARY="${4:-Task completed}"
 
 cd /home/sat/bin/hexswarm
-source .venv/bin/activate 2>/dev/null || true
+source .venv/bin/activate 2>/dev/null || true 2>/dev/null || true
 
 python3 -c "
 import sys
