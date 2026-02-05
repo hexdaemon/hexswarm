@@ -94,7 +94,28 @@ if [ "$NEEDS_WRITE" = false ]; then
         ENRICHED_DESC="$CONTEXT$DESCRIPTION"
     fi
     
-    RESULT=$(timeout 120 mcporter call "${AGENT}.submit_task" type="$TYPE" description="$ENRICHED_DESC" 2>&1) || true
+    # Best-effort Archon-signed auth envelope (optional)
+    AUTH_JSON=$(python3 -c "
+import json, time, secrets
+from agent_mcp.archon_utils import sign_json
+payload = {
+  'issuer': 'did:cid:bagaaieratn3qejd6mr4y2bk3nliriafoyeftt74tkl7il6bbvakfdupahkla',
+  'type': 'hexswarmAuth',
+  'created': time.time(),
+  'nonce': secrets.token_hex(16),
+  'task_type': '$TYPE',
+  'agent': '$AGENT',
+  'description': '''$DESCRIPTION'''
+}
+signed = sign_json(payload)
+print(json.dumps(signed or payload))
+" 2>/dev/null || echo "")
+
+    if [ -n "$AUTH_JSON" ]; then
+        RESULT=$(timeout 120 mcporter call "${AGENT}.submit_task" type="$TYPE" description="$ENRICHED_DESC" auth="$AUTH_JSON" 2>&1) || true
+    else
+        RESULT=$(timeout 120 mcporter call "${AGENT}.submit_task" type="$TYPE" description="$ENRICHED_DESC" 2>&1) || true
+    fi
     
     if echo "$RESULT" | grep -q '"status": "completed"'; then
         echo "✅ MCP completed"

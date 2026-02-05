@@ -68,7 +68,22 @@ def notify_completion(
     
     filename = f"{agent_name}_{task_id}_{int(notification.completed_at)}.json"
     path = NOTIFICATIONS_DIR / "pending" / filename
-    path.write_text(json.dumps(asdict(notification), indent=2, default=str))
+    payload = asdict(notification)
+    path.write_text(json.dumps(payload, indent=2, default=str))
+
+    # Also write a signed receipt file (doesn't break existing tooling)
+    try:
+        from .archon_utils import sign_json
+        signed = sign_json({
+            "type": "hexswarmCompletionReceipt",
+            "issuer": "did:cid:bagaaieratn3qejd6mr4y2bk3nliriafoyeftt74tkl7il6bbvakfdupahkla",
+            "payload": payload,
+        })
+        if signed:
+            signed_path = path.with_suffix(".signed.json")
+            signed_path.write_text(json.dumps(signed, indent=2, default=str))
+    except Exception:
+        pass
 
     # Also log to HexMem (daily log + events)
     try:

@@ -320,7 +320,27 @@ def _get_file_facts(
     return results[:limit]
 
 
-# Agent performance tracking
+# Agent performance tracking (structured, HexMem-backed)
+# NOTE: we keep the old fact-based approach for backwards compatibility by writing
+# both a row in hexswarm_agent_performance and a fact.
+
+def _ensure_perf_tables(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hexswarm_agent_performance (
+          id INTEGER PRIMARY KEY,
+          ts TEXT NOT NULL DEFAULT (datetime('now')),
+          agent_name TEXT NOT NULL,
+          task_type TEXT NOT NULL,
+          success INTEGER NOT NULL,
+          duration_seconds REAL NOT NULL DEFAULT 0,
+          tokens_used INTEGER NOT NULL DEFAULT 0,
+          source TEXT NOT NULL DEFAULT 'hexswarm'
+        );
+        """
+    )
+
+
 def record_agent_performance(
     agent_name: str,
     task_type: str,
@@ -328,108 +348,127 @@ def record_agent_performance(
     duration_seconds: float,
     tokens_used: int = 0,
 ) -> Dict[str, Any]:
-    """Record agent performance for a task type."""
+    """Record a performance sample."""
     try:
         conn = _connect()
-        
-        # Store as a fact: agent -> completed_successfully/failed_at -> task_type
-        predicate = "completed_successfully" if success else "failed_at"
-        
-        conn.execute(
-            """
-            INSERT INTO facts (subject_text, predicate, object_text, source)
-            VALUES (?, ?, ?, 'hexswarm')
-            """,
-            (agent_name, predicate, task_type),
-        )
-        conn.commit()
+        _ensure_perf_tables(conn)
+
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO hexswarm_agent_performance (agent_name, task_type, success, duration_seconds, tokens_used)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (agent_name, task_type, 1 if success else 0, float(duration_seconds or 0), int(tokens_used or 0)),
+            )
+
+            # Back-compat fact record
+            predicate = "completed_successfully" if success else "failed_at"
+            conn.execute(
+                """
+                INSERT INTO facts (subject_text, predicate, object_text, source)
+                VALUES (?, ?, ?, 'hexswarm')
+                """,
+                (agent_name, predicate, task_type),
+            )
+
         conn.close()
-        
         return {"recorded": True}
     except Exception as e:
         return {"error": str(e)}
 
 
 def get_agent_performance(agent_name: str) -> Dict[str, Any]:
-    """Get performance stats for an agent."""
+    """Get performance aggregates for an agent (by task type)."""
     try:
         conn = _connect()
-        
-        # Count successes and failures by task type
+        _ensure_perf_tables(conn)
+
         rows = conn.execute(
             """
-            SELECT predicate, object_text, COUNT(*) as count
-            FROM facts
-            WHERE subject_text = ? AND source = 'hexswarm'
-            AND predicate IN ('completed_successfully', 'failed_at')
-            GROUP BY predicate, object_text
+            SELECT
+              task_type,
+              SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS success,
+              SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) AS failure,
+              AVG(duration_seconds) AS avg_duration_seconds,
+              AVG(tokens_used) AS avg_tokens_used,
+              COUNT(*) AS n
+            FROM hexswarm_agent_performance
+            WHERE agent_name = ?
+            GROUP BY task_type
             """,
             (agent_name,),
         ).fetchall()
-        
-        conn.close()
-        
-        stats = {}
+
+        stats: Dict[str, Any] = {}
         for row in rows:
-            task_type = row[1]
-            if task_type not in stats:
-                stats[task_type] = {'success': 0, 'failure': 0}
-            if row[0] == 'completed_successfully':
-                stats[task_type]['success'] = row[2]
-            else:
-                stats[task_type]['failure'] = row[2]
-        
-        # Calculate success rates
-        for task_type in stats:
-            total = stats[task_type]['success'] + stats[task_type]['failure']
-            stats[task_type]['success_rate'] = (
-                stats[task_type]['success'] / total if total > 0 else 0
-            )
-        
-        return {'agent': agent_name, 'stats': stats}
-        
+            task_type = row[0]
+            success = int(row[1] or 0)
+            failure = int(row[2] or 0)
+            total = success + failure
+            stats[task_type] = {
+                "success": success,
+                "failure": failure,
+                "n": int(row[5] or total),
+                "avg_duration_seconds": float(row[3] or 0.0),
+                "avg_tokens_used": float(row[4] or 0.0),
+                "success_rate": (success / total) if total > 0 else 0.0,
+            }
+
+        conn.close()
+        return {"agent": agent_name, "stats": stats}
+
     except Exception as e:
-        return {'error': str(e)}
+        return {"error": str(e)}
 
 
 def get_best_agent_for_task(task_type: str, available_agents: List[str]) -> Optional[str]:
-    """Get the best agent for a task type based on performance history."""
+    """Pick best agent for a task type.
+
+    Scoring:
+      - require >=3 samples
+      - prefer higher success_rate
+      - tie-breaker: lower avg_duration_seconds
+
+    (We can upgrade to Wilson score later, but this is cheap + robust.)
+    """
     best_agent = None
-    best_rate = -1
-    
+    best_score = None
+
     try:
         conn = _connect()
-        
+        _ensure_perf_tables(conn)
+
         for agent in available_agents:
-            rows = conn.execute(
+            row = conn.execute(
                 """
-                SELECT predicate, COUNT(*) as count
-                FROM facts
-                WHERE subject_text = ? AND object_text = ? AND source = 'hexswarm'
-                AND predicate IN ('completed_successfully', 'failed_at')
-                GROUP BY predicate
+                SELECT
+                  SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS success,
+                  COUNT(*) AS n,
+                  AVG(duration_seconds) AS avg_dur
+                FROM hexswarm_agent_performance
+                WHERE agent_name = ? AND task_type = ?
                 """,
                 (agent, task_type),
-            ).fetchall()
-            
-            success = 0
-            failure = 0
-            for row in rows:
-                if row[0] == 'completed_successfully':
-                    success = row[1]
-                else:
-                    failure = row[1]
-            
-            total = success + failure
-            if total >= 3:  # Need at least 3 samples
-                rate = success / total
-                if rate > best_rate:
-                    best_rate = rate
-                    best_agent = agent
-        
+            ).fetchone()
+            if not row:
+                continue
+            success = int(row[0] or 0)
+            n = int(row[1] or 0)
+            avg_dur = float(row[2] or 0.0)
+            if n < 3:
+                continue
+            rate = success / n if n else 0.0
+
+            # Score tuple: (rate desc, avg_dur asc)
+            score = (rate, -avg_dur)
+            if best_score is None or score > best_score:
+                best_score = score
+                best_agent = agent
+
         conn.close()
-        
+
     except Exception:
         pass
-    
+
     return best_agent

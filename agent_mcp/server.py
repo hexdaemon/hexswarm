@@ -356,6 +356,17 @@ class BaseAgentServer:
         if not allowed:
             return {"task_id": None, "status": "rejected", "reason": "unauthorized"}
 
+        # Log submission (auditable, even for MCP path)
+        try:
+            log_agent_event(
+                self.name,
+                "hexswarm_task_received",
+                f"Received task ({args.get('type','general')})",
+                args.get("description", "")[:500],
+            )
+        except Exception:
+            pass
+
         request = TaskRequest.from_dict(args)
         task_id = f"task_{uuid.uuid4().hex}"
         record = TaskRecord(task_id=task_id, request=request, requester_did=requester_did)
@@ -368,13 +379,31 @@ class BaseAgentServer:
         
         # Return result directly
         if record.result:
-            return {
+            resp = {
                 "task_id": task_id,
                 "status": record.status.value,
                 "result": record.result.result,
                 "summary": record.result.summary,
                 "duration_seconds": record.result.duration_seconds,
             }
+
+            # Best-effort: emit an Archon-signed receipt for the result
+            try:
+                from .archon_utils import sign_json
+                signed = sign_json({
+                    "type": "hexswarmTaskResult",
+                    "issuer": self.did,
+                    "task_id": task_id,
+                    "status": record.status.value,
+                    "summary": record.result.summary,
+                    "duration_seconds": record.result.duration_seconds,
+                })
+                if signed:
+                    resp["signed_receipt"] = signed
+            except Exception:
+                pass
+
+            return resp
         return {
             "task_id": task_id,
             "status": record.status.value,
