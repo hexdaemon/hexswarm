@@ -2,7 +2,7 @@
     "@context": "https://w3id.org/security/v2",
     "type": "RepoManifest",
     "issuer": "did:cid:bagaaieratn3qejd6mr4y2bk3nliriafoyeftt74tkl7il6bbvakfdupahkla",
-    "created": "2026-02-05T16:48:05Z",
+    "created": "2026-02-05T18:29:01Z",
     "repository": "https://github.com/hexdaemon/hexswarm",
     "files": [
         {
@@ -100,6 +100,10 @@
         {
             "path": "./bin/delegate.sh",
             "sha256": "30f31e55da9f123a783c08c719c1cb513a599f98c6ac750979769704f26d2575"
+        },
+        {
+            "path": "./bin/hs",
+            "sha256": "30cb3aa9d86f7021f931bf164e32b96bc214e34359ce516d7a9491abb860de0d"
         },
         {
             "path": "./bin/notify-done.sh",
@@ -10068,9 +10072,9 @@
     ],
     "proof": {
         "type": "EcdsaSecp256k1Signature2019",
-        "created": "2026-02-05T16:48:14.395Z",
+        "created": "2026-02-05T18:29:11.351Z",
         "verificationMethod": "did:cid:bagaaierajrr7k6izcrdfwqxpgtrobflsv5oibymfnthjazkkokaugszyh4ka#key-1",
         "proofPurpose": "assertionMethod",
-        "proofValue": "kJqTRoE9zGMG5F8-De-ZO5j2aIXyKY8F9FTnlxTw3xhDYFoLPOJznJUOnd-_Kdm9vA7321TYb3_oQ0bjy0vblQ"
+        "proofValue": "hLxeKtOMxg6XJnarYeaXnFKMoZq4dxPuQ2hoPkAAljss-ajtSfZ81B4pRaPe3HTOxIwZvipVYMBIxazIoDgTpA"
     }
 }
