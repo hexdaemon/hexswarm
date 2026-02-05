@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# hs — tiny wrapper around hexswarm smart delegation
+# Usage:
+#   hs code "do the thing"
+#   hs research "find stuff"
+#   hs analysis "analyze stuff"
+#   hs <agent> <type> "task"   (e.g. hs codex code "..." )
+
+set -euo pipefail
+
+HEXSWARM_DIR="${HEXSWARM_DIR:-/home/sat/bin/hexswarm}"
+
+if [[ $# -lt 2 ]]; then
+  echo "Usage: hs <type|agent> <type|description> <description...>" >&2
+  echo "Examples:" >&2
+  echo "  hs code \"refactor the storage module\"" >&2
+  echo "  hs auto research \"find papers on LN routing\"" >&2
+  exit 1
+fi
+
+first="$1"; shift
+second="$1"; shift
+
+# If first arg is a known type, assume auto agent
+case "$first" in
+  code|research|analysis|general)
+    agent="auto"
+    type="$first"
+    desc="$second${*:+ }$*"
+    ;;
+  *)
+    agent="$first"
+    type="$second"
+    desc="$*"
+    ;;
+esac
+
+"$HEXSWARM_DIR/bin/smart-delegate.sh" "$agent" "$type" "$desc"
