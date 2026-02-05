@@ -48,6 +48,7 @@ def log_agent_event(
     summary: str,
     details: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Write a structured event into HexMem."""
     category = f"agent:{agent_name}"
     try:
         with _connect() as conn:
@@ -64,6 +65,45 @@ def log_agent_event(
                     "SELECT occurred_at FROM events WHERE id = ?;", (event_id,)
                 ).fetchone()[0]
         return {"event_id": event_id, "occurred_at": occurred_at}
+    except Exception as error:
+        return _handle_db_error(error)
+
+
+def log_daily_log(
+    kind: str,
+    summary: str,
+    details: str = "",
+    source: str = "hexswarm",
+    tags: str = "",
+) -> Dict[str, Any]:
+    """Append an entry to HexMem daily_logs (replacing memory/YYYY-MM-DD.md)."""
+    try:
+        with _connect() as conn:
+            # Ensure daily_logs exists (HexMem migration 011)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS daily_logs (
+                  id INTEGER PRIMARY KEY,
+                  day TEXT NOT NULL,
+                  ts TEXT NOT NULL DEFAULT (datetime('now')),
+                  kind TEXT NOT NULL DEFAULT 'note',
+                  summary TEXT NOT NULL,
+                  details TEXT NOT NULL DEFAULT '',
+                  source TEXT NOT NULL DEFAULT 'hexmem',
+                  tags TEXT NOT NULL DEFAULT ''
+                );
+                """
+            )
+            with conn:
+                cur = conn.execute(
+                    """
+                    INSERT INTO daily_logs (day, kind, summary, details, source, tags)
+                    VALUES (date('now','localtime'), ?, ?, ?, ?, ?)
+                    """,
+                    (kind, summary, details or "", source, tags or ""),
+                )
+                log_id = cur.lastrowid
+        return {"daily_log_id": log_id}
     except Exception as error:
         return _handle_db_error(error)
 

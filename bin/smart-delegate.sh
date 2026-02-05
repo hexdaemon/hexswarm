@@ -20,6 +20,21 @@ fi
 # Generate task ID
 TASK_ID="task_$(date +%s)_$$"
 
+# Log delegation start to HexMem (events + daily log)
+python3 -c "
+import sys, json
+sys.path.insert(0, '$HEXSWARM_DIR')
+from agent_mcp.shared_memory import log_agent_event, log_daily_log
+log_agent_event('hex', 'hexswarm_delegation', 'Delegated task', json.dumps({
+  'task_id': '$TASK_ID',
+  'requested_agent': '$AGENT',
+  'task_type': '$TYPE',
+  'description': '''$DESCRIPTION'''
+}, default=str))
+log_daily_log('ops', f'hexswarm delegate: $TYPE → $AGENT', f'Task {TASK_ID}: {DESCRIPTION[:200]}', source='hexswarm')
+" 2>/dev/null || true
+
+
 # Check if task needs write access (use tmux instead of MCP)
 NEEDS_WRITE=false
 if echo "$DESCRIPTION" | grep -qiE "(create|write|modify|edit|update|save|add|implement|build|fix).*(file|script|code|function|class)"; then

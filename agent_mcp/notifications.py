@@ -69,7 +69,20 @@ def notify_completion(
     filename = f"{agent_name}_{task_id}_{int(notification.completed_at)}.json"
     path = NOTIFICATIONS_DIR / "pending" / filename
     path.write_text(json.dumps(asdict(notification), indent=2, default=str))
-    
+
+    # Also log to HexMem (daily log + events)
+    try:
+        from .shared_memory import log_agent_event, log_daily_log
+        log_agent_event(agent_name, "hexswarm_completion", f"{status}: {task_id}", summary)
+        log_daily_log(
+            "ops",
+            f"hexswarm completion: {agent_name} {status}",
+            f"{task_id}: {summary}",
+            source="hexswarm",
+        )
+    except Exception:
+        pass
+
     return path
 
 

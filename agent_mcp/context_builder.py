@@ -15,19 +15,58 @@ def build_task_context(
     max_items: int = 5,
 ) -> str:
     """Build enriched context for a task by pulling relevant data from HexMem.
-    
-    Returns a context string to prepend to task descriptions, containing:
-    - Relevant recent lessons (what we learned doing similar work)
-    - Related facts (known information about subjects in the task)
-    - Recent related events (what happened recently with these topics)
+
+    Adds a small HexMem-backed cache to avoid re-building similar context bundles.
     """
     context_parts = []
-    
+
     try:
         conn = _connect()
-        
+
+        # Ensure cache table exists
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hexswarm_context_cache (
+              cache_key TEXT PRIMARY KEY,
+              task_type TEXT NOT NULL,
+              description_hash TEXT NOT NULL,
+              context TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              last_used_at TEXT NOT NULL DEFAULT (datetime('now')),
+              use_count INTEGER NOT NULL DEFAULT 0
+            );
+            """
+        )
+
         # Extract keywords from description
         keywords = _extract_keywords(description)
+
+        # Cache lookup key: task_type + stable keyword set
+        import hashlib
+        key_material = (task_type + "|" + " ".join(keywords)).encode("utf-8")
+        cache_key = hashlib.sha256(key_material).hexdigest()
+        desc_hash = hashlib.sha256(description.strip().encode("utf-8")).hexdigest()
+
+        row = conn.execute(
+            """
+            SELECT context FROM hexswarm_context_cache
+            WHERE cache_key = ?
+            """,
+            (cache_key,),
+        ).fetchone()
+
+        if row and row[0]:
+            # Update usage counters
+            conn.execute(
+                """
+                UPDATE hexswarm_context_cache
+                SET last_used_at = datetime('now'), use_count = use_count + 1
+                WHERE cache_key = ?
+                """,
+                (cache_key,),
+            )
+            conn.commit()
+            return row[0]
         
         # 1. Get relevant lessons
         lessons = _get_relevant_lessons(conn, keywords, task_type, max_items)
@@ -62,16 +101,36 @@ def build_task_context(
                     for f in file_facts
                 ))
         
+        # Finalize
         conn.close()
-        
+
     except Exception as e:
         # Don't fail delegation if context building fails
         context_parts.append(f"(context unavailable: {e})")
-    
+
     if not context_parts:
         return ""
-    
-    return "---\n### HexMem Context (for reference)\n" + "\n\n".join(context_parts) + "\n---\n\n"
+
+    final_context = "---\n### HexMem Context (for reference)\n" + "\n\n".join(context_parts) + "\n---\n\n"
+
+    # Best-effort cache write
+    try:
+        conn = _connect()
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO hexswarm_context_cache
+              (cache_key, task_type, description_hash, context, last_used_at, use_count)
+            VALUES
+              (?, ?, ?, ?, datetime('now'), COALESCE((SELECT use_count FROM hexswarm_context_cache WHERE cache_key=?),0) + 1)
+            """,
+            (cache_key, task_type, desc_hash, final_context, cache_key),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+    return final_context
 
 
 def _extract_keywords(text: str) -> List[str]:
