@@ -11,27 +11,44 @@ set -euo pipefail
 HEXSWARM_DIR="${HEXSWARM_DIR:-/home/sat/bin/hexswarm}"
 
 if [[ $# -lt 2 ]]; then
-  echo "Usage: hs <type|agent> <type|description> <description...>" >&2
+  echo "Usage: hs <type|agent> <type|description> [description...]" >&2
   echo "Examples:" >&2
   echo "  hs code \"refactor the storage module\"" >&2
   echo "  hs auto research \"find papers on LN routing\"" >&2
+  echo "  hs codex code \"implement feature X\"" >&2
   exit 1
 fi
 
 first="$1"; shift
-second="$1"; shift
+second="$1"; shift || true
 
 # If first arg is a known type, assume auto agent
 case "$first" in
   code|research|analysis|general)
     agent="auto"
     type="$first"
-    desc="$second${*:+ }$*"
+    # Description is second + rest
+    if [[ -n "${second:-}" ]]; then
+      desc="$second${*:+ }$*"
+    else
+      echo "Error: missing description" >&2
+      exit 1
+    fi
     ;;
-  *)
+  auto|codex|gemini|hex)
     agent="$first"
     type="$second"
     desc="$*"
+    if [[ -z "$desc" ]]; then
+      echo "Error: missing description" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Error: unknown agent or type: $first" >&2
+    echo "Agents: auto, codex, gemini, hex" >&2
+    echo "Types: code, research, analysis, general" >&2
+    exit 1
     ;;
 esac
 

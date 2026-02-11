@@ -39,6 +39,16 @@ AI agents (Hex, Codex, Gemini) communicating via MCP with shared memory, context
 # Smart delegate (auto-selects best agent, enriches context)
 /home/sat/bin/hexswarm/bin/smart-delegate.sh auto code "refactor the storage module"
 
+# Shorthand wrapper
+hs code "refactor the storage module"
+hs research "find papers on LN routing"
+
+# Task lifecycle visibility
+hexswarm-status active              # Pending/running tasks
+hexswarm-status recent 10           # Last 10 tasks
+hexswarm-status stats               # Performance statistics
+hexswarm-status agent codex         # Tasks for specific agent
+
 # Query swarm intelligence
 /home/sat/bin/hexswarm/bin/swarm-intel.sh lessons code
 /home/sat/bin/hexswarm/bin/swarm-intel.sh best research
@@ -95,7 +105,48 @@ mcporter call hex.agent_performance action=get_stats agent_name=codex
 ### Smart Routing
 `smart-delegate.sh auto` picks the best agent based on:
 1. Historical performance data (if available)
-2. Default routing by task type (code→codex, research→gemini)
+2. Skill-to-agent config matches (keywords, domains)
+3. Default routing by task type (code→codex, research→gemini)
+
+### Skill-to-Agent Mapping
+Configure agent preferences in `config/agent-skills.json`:
+
+```json
+{
+  "task_types": {
+    "code": {"preferred": "codex", "fallback": "gemini"},
+    "research": {"preferred": "gemini", "fallback": "codex"}
+  },
+  "domains": {
+    "hive": {"preferred": "codex"},
+    "lightning": {"preferred": "codex"},
+    "papers": {"preferred": "gemini"}
+  },
+  "keywords": {
+    "refactor": "codex",
+    "research": "gemini"
+  }
+}
+```
+
+### Task Lifecycle Tracking
+All tasks are tracked in HexMem (`hexswarm_tasks` table):
+
+```bash
+# View active tasks
+hexswarm-status active
+
+# View recent tasks with results
+hexswarm-status recent 20
+
+# View statistics
+hexswarm-status stats
+
+# View tasks for specific agent
+hexswarm-status agent codex
+```
+
+Task states: `pending` → `running` → `completed` | `failed`
 
 ### Async Notifications
 For tmux-based delegation, agents call `notify-done.sh` when complete:
