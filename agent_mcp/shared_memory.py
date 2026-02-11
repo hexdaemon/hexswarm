@@ -403,3 +403,252 @@ def search_lessons(query: str, limit: int = 10) -> List[Dict[str, Any]]:
             ]
     except Exception as error:
         return [_handle_db_error(error)]
+
+
+# ============================================================================
+# Task Lifecycle Tracking (hexswarm_tasks table)
+# ============================================================================
+
+def _ensure_tasks_table(conn: sqlite3.Connection) -> None:
+    """Create hexswarm_tasks table if not exists."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hexswarm_tasks (
+          id INTEGER PRIMARY KEY,
+          task_id TEXT NOT NULL UNIQUE,
+          agent TEXT NOT NULL,
+          task_type TEXT NOT NULL,
+          description TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          result_summary TEXT,
+          success INTEGER,
+          duration_seconds REAL,
+          error_message TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          started_at TEXT,
+          completed_at TEXT,
+          metadata JSON
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_hexswarm_tasks_status 
+        ON hexswarm_tasks(status);
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_hexswarm_tasks_agent 
+        ON hexswarm_tasks(agent);
+        """
+    )
+    conn.commit()
+
+
+def track_task_start(
+    task_id: str,
+    agent: str,
+    task_type: str,
+    description: str,
+) -> Dict[str, Any]:
+    """Record a new task starting."""
+    try:
+        with _connect() as conn:
+            _ensure_tasks_table(conn)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO hexswarm_tasks 
+                  (task_id, agent, task_type, description, status, started_at)
+                VALUES (?, ?, ?, ?, 'running', datetime('now'))
+                """,
+                (task_id, agent, task_type, description[:1000]),
+            )
+            conn.commit()
+        return {"tracked": True, "task_id": task_id}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def track_task_complete(
+    task_id: str,
+    success: bool,
+    result_summary: str,
+    duration_seconds: float = 0.0,
+    error_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Record a task completing."""
+    status = "completed" if success else "failed"
+    try:
+        with _connect() as conn:
+            _ensure_tasks_table(conn)
+            conn.execute(
+                """
+                UPDATE hexswarm_tasks
+                SET status = ?,
+                    success = ?,
+                    result_summary = ?,
+                    duration_seconds = ?,
+                    error_message = ?,
+                    completed_at = datetime('now')
+                WHERE task_id = ?
+                """,
+                (status, 1 if success else 0, result_summary[:1000], 
+                 duration_seconds, error_message, task_id),
+            )
+            conn.commit()
+        return {"tracked": True, "task_id": task_id, "status": status}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def get_active_tasks(agent: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get all pending/running tasks."""
+    try:
+        with _connect() as conn:
+            _ensure_tasks_table(conn)
+            if agent:
+                rows = conn.execute(
+                    """
+                    SELECT task_id, agent, task_type, description, status,
+                           created_at, started_at
+                    FROM hexswarm_tasks
+                    WHERE status IN ('pending', 'running') AND agent = ?
+                    ORDER BY created_at DESC
+                    """,
+                    (agent,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT task_id, agent, task_type, description, status,
+                           created_at, started_at
+                    FROM hexswarm_tasks
+                    WHERE status IN ('pending', 'running')
+                    ORDER BY created_at DESC
+                    """,
+                ).fetchall()
+            return [
+                {
+                    "task_id": row["task_id"],
+                    "agent": row["agent"],
+                    "task_type": row["task_type"],
+                    "description": row["description"][:100] + "..." if len(row["description"]) > 100 else row["description"],
+                    "status": row["status"],
+                    "created_at": row["created_at"],
+                    "started_at": row["started_at"],
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+def get_recent_tasks(limit: int = 20, agent: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get recent tasks (all statuses)."""
+    try:
+        with _connect() as conn:
+            _ensure_tasks_table(conn)
+            if agent:
+                rows = conn.execute(
+                    """
+                    SELECT task_id, agent, task_type, description, status,
+                           success, result_summary, duration_seconds, error_message,
+                           created_at, completed_at
+                    FROM hexswarm_tasks
+                    WHERE agent = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (agent, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT task_id, agent, task_type, description, status,
+                           success, result_summary, duration_seconds, error_message,
+                           created_at, completed_at
+                    FROM hexswarm_tasks
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            return [
+                {
+                    "task_id": row["task_id"],
+                    "agent": row["agent"],
+                    "task_type": row["task_type"],
+                    "description": row["description"][:100] + "..." if len(row["description"]) > 100 else row["description"],
+                    "status": row["status"],
+                    "success": bool(row["success"]) if row["success"] is not None else None,
+                    "result_summary": row["result_summary"],
+                    "duration_seconds": row["duration_seconds"],
+                    "error_message": row["error_message"],
+                    "created_at": row["created_at"],
+                    "completed_at": row["completed_at"],
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+def get_task_stats() -> Dict[str, Any]:
+    """Get aggregate task statistics."""
+    try:
+        with _connect() as conn:
+            _ensure_tasks_table(conn)
+            
+            # Overall stats
+            overall = conn.execute(
+                """
+                SELECT 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) as running,
+                    SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,
+                    AVG(CASE WHEN success=1 THEN duration_seconds END) as avg_success_duration
+                FROM hexswarm_tasks
+                """
+            ).fetchone()
+            
+            # Per-agent stats
+            agent_rows = conn.execute(
+                """
+                SELECT 
+                    agent,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) as success,
+                    SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) as failure,
+                    AVG(duration_seconds) as avg_duration
+                FROM hexswarm_tasks
+                WHERE status IN ('completed', 'failed')
+                GROUP BY agent
+                """
+            ).fetchall()
+            
+            agents = {}
+            for row in agent_rows:
+                total = int(row["total"] or 0)
+                success = int(row["success"] or 0)
+                agents[row["agent"]] = {
+                    "total": total,
+                    "success": success,
+                    "failure": int(row["failure"] or 0),
+                    "success_rate": (success / total) if total > 0 else 0.0,
+                    "avg_duration": float(row["avg_duration"] or 0.0),
+                }
+            
+            return {
+                "total": int(overall["total"] or 0),
+                "pending": int(overall["pending"] or 0),
+                "running": int(overall["running"] or 0),
+                "completed": int(overall["completed"] or 0),
+                "failed": int(overall["failed"] or 0),
+                "avg_success_duration": float(overall["avg_success_duration"] or 0.0),
+                "by_agent": agents,
+            }
+    except Exception as e:
+        return {"error": str(e)}

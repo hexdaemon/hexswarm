@@ -1,0 +1,93 @@
+{
+  "_comment": "Skill-to-agent mapping for hexswarm smart routing",
+  "_updated": "2026-02-11",
+  
+  "task_types": {
+    "code": {
+      "preferred": "codex",
+      "fallback": "gemini",
+      "reason": "Codex specializes in code generation and analysis"
+    },
+    "research": {
+      "preferred": "gemini",
+      "fallback": "codex",
+      "reason": "Gemini has strong research and synthesis capabilities"
+    },
+    "analysis": {
+      "preferred": "gemini",
+      "fallback": "codex",
+      "reason": "Gemini excels at open-ended analysis"
+    },
+    "general": {
+      "preferred": "codex",
+      "fallback": "gemini",
+      "reason": "Default to Codex for general tasks"
+    }
+  },
+  
+  "domains": {
+    "hive": {
+      "preferred": "codex",
+      "reason": "Codex has persistent context for Lightning Hive"
+    },
+    "lightning": {
+      "preferred": "codex",
+      "reason": "Codex has Lightning/Bitcoin domain knowledge"
+    },
+    "nostr": {
+      "preferred": "codex",
+      "reason": "Codex familiar with nostr protocol"
+    },
+    "archon": {
+      "preferred": "codex",
+      "reason": "Codex has DID/Archon context"
+    },
+    "hexmem": {
+      "preferred": "codex",
+      "reason": "Codex knows HexMem schema"
+    },
+    "papers": {
+      "preferred": "gemini",
+      "reason": "Gemini better at academic research"
+    },
+    "market": {
+      "preferred": "gemini",
+      "reason": "Gemini good at market analysis"
+    },
+    "web": {
+      "preferred": "gemini",
+      "reason": "Gemini can browse/research web content"
+    }
+  },
+  
+  "keywords": {
+    "refactor": "codex",
+    "implement": "codex",
+    "debug": "codex",
+    "fix": "codex",
+    "test": "codex",
+    "research": "gemini",
+    "analyze": "gemini",
+    "compare": "gemini",
+    "summarize": "gemini",
+    "find": "gemini"
+  },
+  
+  "agent_capabilities": {
+    "codex": {
+      "strengths": ["code", "debugging", "refactoring", "implementation"],
+      "context_aware": true,
+      "file_access": true
+    },
+    "gemini": {
+      "strengths": ["research", "analysis", "summarization", "exploration"],
+      "context_aware": false,
+      "file_access": true
+    },
+    "hex": {
+      "strengths": ["coordination", "monitoring", "delegation"],
+      "context_aware": true,
+      "file_access": true
+    }
+  }
+}

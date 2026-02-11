@@ -1,0 +1,162 @@
+#!/bin/bash
+# hexswarm-status — View task lifecycle and swarm status
+# Usage: hexswarm-status [active|recent|stats|agent <name>]
+
+set -e
+
+HEXSWARM_DIR="${HEXSWARM_DIR:-/home/sat/bin/hexswarm}"
+
+show_help() {
+    cat <<EOF
+Hexswarm Status — Task Lifecycle Visibility
+
+Usage: hexswarm-status [command] [args]
+
+Commands:
+  active              Show pending/running tasks
+  recent [limit]      Show recent tasks (default: 20)
+  stats               Show aggregate statistics
+  agent <name>        Show tasks for specific agent
+  notifications       Check pending completion notifications
+
+Examples:
+  hexswarm-status                    # Same as 'active'
+  hexswarm-status active             # Pending/running tasks
+  hexswarm-status recent 10          # Last 10 tasks
+  hexswarm-status stats              # Performance stats
+  hexswarm-status agent codex        # Codex tasks only
+EOF
+}
+
+case "${1:-active}" in
+    active)
+        echo "🔄 Active Tasks (pending/running)"
+        echo "================================="
+        python3 << 'PYEOF'
+import sys
+sys.path.insert(0, '/home/sat/bin/hexswarm')
+from agent_mcp.shared_memory import get_active_tasks
+
+tasks = get_active_tasks()
+if not tasks or (len(tasks) == 1 and 'error' in tasks[0]):
+    print("No active tasks")
+else:
+    for t in tasks:
+        status_icon = "⏳" if t['status'] == 'pending' else "🏃"
+        print(f"{status_icon} [{t['agent']}] {t['task_type']}: {t['description']}")
+        print(f"   Task ID: {t['task_id']}")
+        print(f"   Started: {t.get('started_at') or t['created_at']}")
+        print()
+PYEOF
+        ;;
+    
+    recent)
+        LIMIT="${2:-20}"
+        echo "📜 Recent Tasks (last $LIMIT)"
+        echo "============================="
+        python3 << PYEOF
+import sys
+sys.path.insert(0, '/home/sat/bin/hexswarm')
+from agent_mcp.shared_memory import get_recent_tasks
+
+tasks = get_recent_tasks($LIMIT)
+if not tasks or (len(tasks) == 1 and 'error' in tasks[0]):
+    print("No tasks found")
+else:
+    for t in tasks:
+        if t['status'] == 'completed':
+            icon = "✅"
+        elif t['status'] == 'failed':
+            icon = "❌"
+        elif t['status'] == 'running':
+            icon = "🏃"
+        else:
+            icon = "⏳"
+        
+        duration = f" ({t['duration_seconds']:.1f}s)" if t.get('duration_seconds') else ""
+        print(f"{icon} [{t['agent']}] {t['task_type']}: {t['description']}{duration}")
+        if t.get('result_summary'):
+            print(f"   Result: {t['result_summary'][:80]}...")
+        if t.get('error_message'):
+            print(f"   Error: {t['error_message'][:80]}")
+        print()
+PYEOF
+        ;;
+    
+    stats)
+        echo "📊 Hexswarm Statistics"
+        echo "======================"
+        python3 << 'PYEOF'
+import sys
+sys.path.insert(0, '/home/sat/bin/hexswarm')
+from agent_mcp.shared_memory import get_task_stats
+
+stats = get_task_stats()
+if 'error' in stats:
+    print(f"Error: {stats['error']}")
+else:
+    print(f"Total Tasks: {stats['total']}")
+    print(f"  Pending:   {stats['pending']}")
+    print(f"  Running:   {stats['running']}")
+    print(f"  Completed: {stats['completed']}")
+    print(f"  Failed:    {stats['failed']}")
+    if stats['avg_success_duration'] > 0:
+        print(f"  Avg Duration: {stats['avg_success_duration']:.1f}s")
+    print()
+    
+    if stats.get('by_agent'):
+        print("By Agent:")
+        for agent, data in stats['by_agent'].items():
+            rate = data['success_rate'] * 100
+            print(f"  {agent}: {data['success']}/{data['total']} ({rate:.0f}% success)")
+PYEOF
+        ;;
+    
+    agent)
+        AGENT="${2:-}"
+        if [ -z "$AGENT" ]; then
+            echo "Usage: hexswarm-status agent <name>"
+            exit 1
+        fi
+        echo "📋 Tasks for $AGENT"
+        echo "==================="
+        python3 << PYEOF
+import sys
+sys.path.insert(0, '/home/sat/bin/hexswarm')
+from agent_mcp.shared_memory import get_recent_tasks
+
+tasks = get_recent_tasks(20, agent='$AGENT')
+if not tasks or (len(tasks) == 1 and 'error' in tasks[0]):
+    print("No tasks found for $AGENT")
+else:
+    for t in tasks:
+        if t['status'] == 'completed':
+            icon = "✅"
+        elif t['status'] == 'failed':
+            icon = "❌"
+        elif t['status'] == 'running':
+            icon = "🏃"
+        else:
+            icon = "⏳"
+        
+        duration = f" ({t['duration_seconds']:.1f}s)" if t.get('duration_seconds') else ""
+        print(f"{icon} {t['task_type']}: {t['description']}{duration}")
+PYEOF
+        ;;
+    
+    notifications)
+        echo "📬 Pending Notifications"
+        echo "========================"
+        "$HEXSWARM_DIR/bin/check-completions.sh"
+        ;;
+    
+    help|--help|-h)
+        show_help
+        ;;
+    
+    *)
+        echo "Unknown command: $1"
+        show_help
+        exit 1
+        ;;
+esac
