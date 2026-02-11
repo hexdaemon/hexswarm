@@ -156,6 +156,26 @@ class TaskRecord:
         )
 
 
+# Agent DIDs (canonical values)
+AGENT_DIDS = {
+    "hex": "did:cid:bagaaieratn3qejd6mr4y2bk3nliriafoyeftt74tkl7il6bbvakfdupahkla",
+    "codex": "did:cid:bagaaierawhtwebyik523xjzhmxgfonrw56ssimutvr2surw3iypvgpjzehoa",
+    "gemini": "did:cid:bagaaieraafcrruni2vrpp4nmzhwpe2vnjjjuxj2lb5cew76jixjuil7fxoqa",
+}
+
+
+def build_prompt(record: "TaskRecord") -> str:
+    """Build a prompt string from a task record. Shared by all agent servers."""
+    parts: list[str] = [record.request.description]
+    if record.request.context:
+        parts.append("Context:\n" + record.request.context)
+    if record.request.files:
+        parts.append("Files:\n" + "\n".join(record.request.files))
+    if record.request.constraints:
+        parts.append("Constraints:\n" + "\n".join(record.request.constraints))
+    return "\n\n".join(parts)
+
+
 AGENT_INFO_SCHEMA = {
     "type": "object",
     "properties": {

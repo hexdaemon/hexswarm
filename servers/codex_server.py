@@ -10,21 +10,10 @@ import subprocess
 from pathlib import Path
 from typing import List
 
-from agent_mcp.protocol import TaskRecord, TaskResult, TaskStatus
+from agent_mcp.protocol import TaskRecord, TaskResult, TaskStatus, AGENT_DIDS, build_prompt
 from agent_mcp.resources import parse_codex_tokens
 from agent_mcp.server import BaseAgentServer
 from agent_mcp.storage import TaskStorage
-
-
-def _build_prompt(record: TaskRecord) -> str:
-    parts: List[str] = [record.request.description]
-    if record.request.context:
-        parts.append("Context:\n" + record.request.context)
-    if record.request.files:
-        parts.append("Files:\n" + "\n".join(record.request.files))
-    if record.request.constraints:
-        parts.append("Constraints:\n" + "\n".join(record.request.constraints))
-    return "\n\n".join(parts)
 
 
 class CodexServer(BaseAgentServer):
@@ -32,7 +21,7 @@ class CodexServer(BaseAgentServer):
         storage_dir = Path(os.environ.get("CODEX_TASK_DIR", "~/.agent/codex/tasks"))
         storage = TaskStorage(storage_dir)
         name = os.environ.get("CODEX_AGENT_NAME", "codex")
-        did = os.environ.get("CODEX_AGENT_DID", "did:cid:codex")
+        did = os.environ.get("CODEX_AGENT_DID", AGENT_DIDS.get("codex", "did:cid:codex"))
         capabilities = ["code", "analysis"]
         super().__init__(name=name, did=did, capabilities=capabilities, storage=storage)
 
@@ -40,7 +29,7 @@ class CodexServer(BaseAgentServer):
         cmd = os.environ.get("CODEX_CLI", "codex")
         timeout = record.request.timeout_seconds or int(os.environ.get("CODEX_TASK_TIMEOUT", "1800"))
         workdir = os.environ.get("CODEX_WORKDIR", os.path.expanduser("~/clawd"))
-        prompt = _build_prompt(record)
+        prompt = build_prompt(record)
 
         # Use 'codex exec' for non-interactive execution
         # Run from a trusted git directory to avoid security checks
