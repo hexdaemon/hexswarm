@@ -1,50 +1,59 @@
 {
   "_comment": "Skill-to-agent mapping for hexswarm smart routing",
   "_updated": "2026-02-11",
+  "_note": "claude-code preferred over codex when available",
   
   "task_types": {
     "code": {
-      "preferred": "codex",
-      "fallback": "gemini",
-      "reason": "Codex specializes in code generation and analysis"
+      "preferred": "claude-code",
+      "fallback": "codex",
+      "reason": "Claude Code is primary coding agent"
     },
     "research": {
       "preferred": "gemini",
-      "fallback": "codex",
+      "fallback": "claude-code",
       "reason": "Gemini has strong research and synthesis capabilities"
     },
     "analysis": {
-      "preferred": "gemini",
-      "fallback": "codex",
-      "reason": "Gemini excels at open-ended analysis"
+      "preferred": "claude-code",
+      "fallback": "gemini",
+      "reason": "Claude Code excels at detailed analysis"
     },
     "general": {
-      "preferred": "codex",
+      "preferred": "claude-code",
       "fallback": "gemini",
-      "reason": "Default to Codex for general tasks"
+      "reason": "Default to Claude Code for general tasks"
     }
   },
   
   "domains": {
     "hive": {
-      "preferred": "codex",
-      "reason": "Codex has persistent context for Lightning Hive"
+      "preferred": "claude-code",
+      "reason": "Claude Code has persistent context for Lightning Hive"
     },
     "lightning": {
-      "preferred": "codex",
-      "reason": "Codex has Lightning/Bitcoin domain knowledge"
+      "preferred": "claude-code",
+      "reason": "Claude Code has Lightning/Bitcoin domain knowledge"
     },
     "nostr": {
-      "preferred": "codex",
-      "reason": "Codex familiar with nostr protocol"
+      "preferred": "claude-code",
+      "reason": "Claude Code familiar with nostr protocol"
     },
     "archon": {
-      "preferred": "codex",
-      "reason": "Codex has DID/Archon context"
+      "preferred": "claude-code",
+      "reason": "Claude Code has DID/Archon context"
     },
     "hexmem": {
-      "preferred": "codex",
-      "reason": "Codex knows HexMem schema"
+      "preferred": "claude-code",
+      "reason": "Claude Code knows HexMem schema"
+    },
+    "hexswarm": {
+      "preferred": "claude-code",
+      "reason": "Claude Code knows hexswarm architecture"
+    },
+    "openclaw": {
+      "preferred": "claude-code",
+      "reason": "Claude Code familiar with OpenClaw"
     },
     "papers": {
       "preferred": "gemini",
@@ -61,33 +70,50 @@
   },
   
   "keywords": {
-    "refactor": "codex",
-    "implement": "codex",
-    "debug": "codex",
-    "fix": "codex",
-    "test": "codex",
+    "refactor": "claude-code",
+    "implement": "claude-code",
+    "debug": "claude-code",
+    "fix": "claude-code",
+    "test": "claude-code",
+    "audit": "claude-code",
+    "review": "claude-code",
     "research": "gemini",
-    "analyze": "gemini",
+    "analyze": "claude-code",
     "compare": "gemini",
     "summarize": "gemini",
     "find": "gemini"
   },
   
   "agent_capabilities": {
+    "claude-code": {
+      "cli": "claude",
+      "strengths": ["code", "debugging", "refactoring", "implementation", "analysis", "audit"],
+      "context_aware": true,
+      "file_access": true,
+      "preferred": true
+    },
     "codex": {
+      "cli": "codex",
       "strengths": ["code", "debugging", "refactoring", "implementation"],
       "context_aware": true,
-      "file_access": true
+      "file_access": true,
+      "preferred": false,
+      "note": "Fallback when claude-code unavailable"
     },
     "gemini": {
+      "cli": "gemini",
       "strengths": ["research", "analysis", "summarization", "exploration"],
       "context_aware": false,
-      "file_access": true
+      "file_access": true,
+      "preferred": false
     },
     "hex": {
       "strengths": ["coordination", "monitoring", "delegation"],
       "context_aware": true,
-      "file_access": true
+      "file_access": true,
+      "note": "Orchestrator - delegates to other agents"
     }
-  }
+  },
+
+  "routing_priority": ["claude-code", "codex", "gemini"]
 }

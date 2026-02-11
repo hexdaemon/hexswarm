@@ -12,14 +12,14 @@ DESCRIPTION="$*"
 
 if [ -z "$DESCRIPTION" ]; then
     echo "Usage: smart-delegate.sh <agent|auto> <type> <description>"
-    echo "Agents: codex, gemini, auto (picks best based on performance)"
+    echo "Agents: claude-code (preferred), codex, gemini, auto (picks best)"
     echo "Types: code, research, analysis, general"
     exit 1
 fi
 
 # Validate agent name
 case "$AGENT" in
-    auto|codex|gemini|hex) ;;
+    auto|claude-code|codex|gemini|hex) ;;
     *) echo "❌ Unknown agent: $AGENT"; exit 1 ;;
 esac
 
@@ -61,15 +61,22 @@ fi
 
 # Tmux targets
 declare -A TMUX_TARGETS
+TMUX_TARGETS[claude-code]="ssh_tmux:claude"
 TMUX_TARGETS[codex]="ssh_tmux:codex"
 TMUX_TARGETS[gemini]="ssh_tmux:2.0"
+
+# CLI commands for each agent
+declare -A AGENT_CLI
+AGENT_CLI[claude-code]="claude"
+AGENT_CLI[codex]="codex"
+AGENT_CLI[gemini]="gemini"
 
 # Auto-select agent based on performance and config
 if [ "$AGENT" = "auto" ]; then
     echo "🎯 Auto-selecting best agent for '$TYPE' tasks..."
     
     # Try to get best agent from performance data first
-    BEST=$(mcporter call hex.agent_performance action=best_for_task task_type="$TYPE" available_agents='["codex", "gemini"]' 2>&1 | jq -r '.best_agent // empty' 2>/dev/null || true)
+    BEST=$(mcporter call hex.agent_performance action=best_for_task task_type="$TYPE" available_agents='["claude-code", "codex", "gemini"]' 2>&1 | jq -r '.best_agent // empty' 2>/dev/null || true)
     
     if [ -n "$BEST" ] && [ "$BEST" != "null" ]; then
         AGENT="$BEST"
@@ -108,13 +115,13 @@ PYEOF
             fi
         fi
         
-        # Ultimate fallback
+        # Ultimate fallback - prefer claude-code
         if [ "$AGENT" = "auto" ]; then
             case "$TYPE" in
-                code)      AGENT="codex" ;;
+                code)      AGENT="claude-code" ;;
                 research)  AGENT="gemini" ;;
-                analysis)  AGENT="gemini" ;;
-                *)         AGENT="codex" ;;
+                analysis)  AGENT="claude-code" ;;
+                *)         AGENT="claude-code" ;;
             esac
             echo "   Selected: $AGENT (default for $TYPE tasks)"
         fi

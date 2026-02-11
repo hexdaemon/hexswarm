@@ -35,7 +35,7 @@ case "$first" in
       exit 1
     fi
     ;;
-  auto|codex|gemini|hex)
+  auto|claude-code|codex|gemini|hex)
     agent="$first"
     type="$second"
     desc="$*"
@@ -46,7 +46,7 @@ case "$first" in
     ;;
   *)
     echo "Error: unknown agent or type: $first" >&2
-    echo "Agents: auto, codex, gemini, hex" >&2
+    echo "Agents: auto, claude-code (preferred), codex, gemini, hex" >&2
     echo "Types: code, research, analysis, general" >&2
     exit 1
     ;;
