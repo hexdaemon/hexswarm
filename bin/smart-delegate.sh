@@ -17,22 +17,40 @@ if [ -z "$DESCRIPTION" ]; then
     exit 1
 fi
 
-# Generate task ID
+# Validate agent name
+case "$AGENT" in
+    auto|codex|gemini|hex) ;;
+    *) echo "❌ Unknown agent: $AGENT"; exit 1 ;;
+esac
+
+# Validate task type
+case "$TYPE" in
+    code|research|analysis|general) ;;
+    *) echo "❌ Unknown task type: $TYPE"; exit 1 ;;
+esac
+
+# Generate task ID (alphanumeric only for safety)
 TASK_ID="task_$(date +%s)_$$"
 
+# Base64 encode description for safe passing to Python
+DESC_B64=$(echo -n "$DESCRIPTION" | base64 -w 0)
+
 # Log delegation start to HexMem (events + daily log)
-python3 -c "
-import sys, json
+python3 << PYEOF
+import sys, json, base64
 sys.path.insert(0, '$HEXSWARM_DIR')
 from agent_mcp.shared_memory import log_agent_event, log_daily_log
+
+desc = base64.b64decode('$DESC_B64').decode('utf-8')
 log_agent_event('hex', 'hexswarm_delegation', 'Delegated task', json.dumps({
   'task_id': '$TASK_ID',
   'requested_agent': '$AGENT',
   'task_type': '$TYPE',
-  'description': '''$DESCRIPTION'''
+  'description': desc[:500]
 }, default=str))
-log_daily_log('ops', f'hexswarm delegate: $TYPE → $AGENT', f'Task {TASK_ID}: {DESCRIPTION[:200]}', source='hexswarm')
-" 2>/dev/null || true
+log_daily_log('ops', f'hexswarm delegate: $TYPE → $AGENT', f'Task $TASK_ID: {desc[:200]}', source='hexswarm')
+PYEOF
+
 
 
 # Check if task needs write access (use tmux instead of MCP)
@@ -46,37 +64,85 @@ declare -A TMUX_TARGETS
 TMUX_TARGETS[codex]="ssh_tmux:codex"
 TMUX_TARGETS[gemini]="ssh_tmux:2.0"
 
-# Auto-select agent based on performance if requested
+# Auto-select agent based on performance and config
 if [ "$AGENT" = "auto" ]; then
     echo "🎯 Auto-selecting best agent for '$TYPE' tasks..."
     
-    # Try to get best agent from performance data
+    # Try to get best agent from performance data first
     BEST=$(mcporter call hex.agent_performance action=best_for_task task_type="$TYPE" available_agents='["codex", "gemini"]' 2>&1 | jq -r '.best_agent // empty' 2>/dev/null || true)
     
     if [ -n "$BEST" ] && [ "$BEST" != "null" ]; then
         AGENT="$BEST"
         echo "   Selected: $AGENT (based on historical performance)"
     else
-        # Default routing by task type
-        case "$TYPE" in
-            code)      AGENT="codex" ;;
-            research)  AGENT="gemini" ;;
-            analysis)  AGENT="gemini" ;;
-            *)         AGENT="codex" ;;
-        esac
-        echo "   Selected: $AGENT (default for $TYPE tasks)"
+        # Check config file for domain/keyword matches
+        CONFIG_FILE="$HEXSWARM_DIR/config/agent-skills.json"
+        if [ -f "$CONFIG_FILE" ]; then
+            # Check for domain keywords in description
+            DOMAIN_AGENT=$(python3 << PYEOF
+import json, base64
+desc = base64.b64decode('$DESC_B64').decode('utf-8').lower()
+with open('$CONFIG_FILE') as f:
+    config = json.load(f)
+
+# Check keywords first
+for keyword, agent in config.get('keywords', {}).items():
+    if keyword in desc:
+        print(agent)
+        exit()
+
+# Check domains
+for domain, info in config.get('domains', {}).items():
+    if domain in desc:
+        print(info['preferred'])
+        exit()
+
+# Fall back to task type config
+task_config = config.get('task_types', {}).get('$TYPE', {})
+print(task_config.get('preferred', ''))
+PYEOF
+)
+            if [ -n "$DOMAIN_AGENT" ]; then
+                AGENT="$DOMAIN_AGENT"
+                echo "   Selected: $AGENT (from skill config)"
+            fi
+        fi
+        
+        # Ultimate fallback
+        if [ "$AGENT" = "auto" ]; then
+            case "$TYPE" in
+                code)      AGENT="codex" ;;
+                research)  AGENT="gemini" ;;
+                analysis)  AGENT="gemini" ;;
+                *)         AGENT="codex" ;;
+            esac
+            echo "   Selected: $AGENT (default for $TYPE tasks)"
+        fi
     fi
 fi
 
+# Track task start in HexMem
+python3 << PYEOF
+import sys, base64
+sys.path.insert(0, '$HEXSWARM_DIR')
+from agent_mcp.shared_memory import track_task_start
+
+desc = base64.b64decode('$DESC_B64').decode('utf-8')
+track_task_start('$TASK_ID', '$AGENT', '$TYPE', desc)
+PYEOF
+
 # Build enriched context from HexMem
 echo "📚 Building context from HexMem..."
-CONTEXT=$(python3 -c "
-import sys
+CONTEXT=$(python3 << PYEOF
+import sys, base64
 sys.path.insert(0, '$HEXSWARM_DIR')
 from agent_mcp.context_builder import build_task_context
-context = build_task_context('''$DESCRIPTION''', '$TYPE')
+
+desc = base64.b64decode('$DESC_B64').decode('utf-8')
+context = build_task_context(desc, '$TYPE')
 print(context)
-" 2>/dev/null || echo "")
+PYEOF
+) || CONTEXT=""
 
 if [ -n "$CONTEXT" ]; then
     echo "   Found relevant context"
@@ -95,9 +161,12 @@ if [ "$NEEDS_WRITE" = false ]; then
     fi
     
     # Best-effort Archon-signed auth envelope (optional)
-    AUTH_JSON=$(python3 -c "
-import json, time, secrets
+    AUTH_JSON=$(python3 << PYEOF
+import sys, json, time, secrets, base64
+sys.path.insert(0, '$HEXSWARM_DIR')
 from agent_mcp.archon_utils import sign_json
+
+desc = base64.b64decode('$DESC_B64').decode('utf-8')
 payload = {
   'issuer': 'did:cid:bagaaieratn3qejd6mr4y2bk3nliriafoyeftt74tkl7il6bbvakfdupahkla',
   'type': 'hexswarmAuth',
@@ -105,11 +174,12 @@ payload = {
   'nonce': secrets.token_hex(16),
   'task_type': '$TYPE',
   'agent': '$AGENT',
-  'description': '''$DESCRIPTION'''
+  'description': desc[:500]
 }
 signed = sign_json(payload)
 print(json.dumps(signed or payload))
-" 2>/dev/null || echo "")
+PYEOF
+) || AUTH_JSON=""
 
     if [ -n "$AUTH_JSON" ]; then
         RESULT=$(timeout 120 mcporter call "${AGENT}.submit_task" type="$TYPE" description="$ENRICHED_DESC" auth="$AUTH_JSON" 2>&1) || true
@@ -120,14 +190,18 @@ print(json.dumps(signed or payload))
     if echo "$RESULT" | grep -q '"status": "completed"'; then
         echo "✅ MCP completed"
         
-        # Record performance
+        # Record performance and track completion in HexMem
         DURATION=$(echo "$RESULT" | jq -r '.duration_seconds // 0' 2>/dev/null || echo "0")
-        python3 -c "
+        SUMMARY=$(echo "$RESULT" | jq -r '.summary // "Task completed"' 2>/dev/null || echo "Task completed")
+        python3 << PYEOF
 import sys
 sys.path.insert(0, '$HEXSWARM_DIR')
 from agent_mcp.context_builder import record_agent_performance
+from agent_mcp.shared_memory import track_task_complete
+
 record_agent_performance('$AGENT', '$TYPE', True, $DURATION)
-" 2>/dev/null || true
+track_task_complete('$TASK_ID', True, '''$SUMMARY''', $DURATION)
+PYEOF
         
         echo "$RESULT" | jq -r '.result // .summary // "Done"' 2>/dev/null || echo "$RESULT"
         exit 0
@@ -135,12 +209,16 @@ record_agent_performance('$AGENT', '$TYPE', True, $DURATION)
     
     # Record failure if it was a real failure (not just timeout/unavailable)
     if echo "$RESULT" | grep -q '"status": "failed"'; then
-        python3 -c "
+        ERROR_MSG=$(echo "$RESULT" | jq -r '.error // "Unknown error"' 2>/dev/null || echo "Unknown error")
+        python3 << PYEOF
 import sys
 sys.path.insert(0, '$HEXSWARM_DIR')
 from agent_mcp.context_builder import record_agent_performance
+from agent_mcp.shared_memory import track_task_complete
+
 record_agent_performance('$AGENT', '$TYPE', False, 0)
-" 2>/dev/null || true
+track_task_complete('$TASK_ID', False, 'Task failed', 0, '''$ERROR_MSG''')
+PYEOF
     fi
     
     echo "⚠️  MCP unavailable or failed, using tmux..."
@@ -170,7 +248,7 @@ if [ -n "$CONTEXT" ]; then
     FULL_PROMPT="$CONTEXT$DESCRIPTION"
 fi
 
-FULL_PROMPT="$FULL_PROMPT
+COMPLETION_INSTRUCTIONS="
 
 IMPORTANT: When you complete this task:
 1. If you learned something useful, record it:
@@ -178,8 +256,15 @@ IMPORTANT: When you complete this task:
 2. Notify completion:
    $HEXSWARM_DIR/bin/notify-done.sh $TASK_ID $AGENT completed \"Brief summary of what you did\""
 
-# Send to tmux
-tmux send-keys -t "$TMUX_TARGET" "$FULL_PROMPT" Enter
+FULL_PROMPT="${FULL_PROMPT}${COMPLETION_INSTRUCTIONS}"
+
+# Send to tmux using a temp file to avoid shell escaping issues
+TMPFILE=$(mktemp)
+echo "$FULL_PROMPT" > "$TMPFILE"
+tmux load-buffer "$TMPFILE"
+tmux paste-buffer -t "$TMUX_TARGET"
+tmux send-keys -t "$TMUX_TARGET" Enter
+rm -f "$TMPFILE"
 
 echo ""
 echo "📤 Task sent with enriched context. Agent will notify when complete."

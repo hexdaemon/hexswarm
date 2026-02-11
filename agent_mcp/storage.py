@@ -61,9 +61,14 @@ class TaskStorage:
         finally:
             try:
                 fcntl.flock(lock_file, fcntl.LOCK_UN)
-            except:
+            except Exception:
                 pass
             lock_file.close()
+            # Clean up lock file
+            try:
+                lock_path.unlink()
+            except Exception:
+                pass
 
     def move_task(self, task_id: str, old_status: TaskStatus, new_status: TaskStatus) -> None:
         old_path = self._path_for(task_id, old_status)

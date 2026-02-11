@@ -125,14 +125,21 @@ def check_notifications(agent_name: str = None) -> list[Dict[str, Any]]:
 
 
 def acknowledge_notification(notification: Dict[str, Any]) -> bool:
-    """Move a notification from pending to processed."""
+    """Move a notification from pending to processed (race-safe)."""
     path = Path(notification.get("_path", ""))
     if not path.exists():
         return False
     
     processed_path = NOTIFICATIONS_DIR / "processed" / path.name
-    path.rename(processed_path)
-    return True
+    try:
+        path.rename(processed_path)
+        return True
+    except FileNotFoundError:
+        # Already moved by another process - not an error
+        return True
+    except OSError as e:
+        # Other errors (permission, etc.)
+        return False
 
 
 def clear_old_notifications(max_age_hours: int = 24):
@@ -149,18 +156,4 @@ def clear_old_notifications(max_age_hours: int = 24):
             path.unlink()
 
 
-# Shell helper for agents to call
-NOTIFY_SHELL_CMD = '''
-python3 -c "
-import sys
-sys.path.insert(0, '/home/sat/bin/agent-mcp')
-from agent_mcp.notifications import notify_completion
-notify_completion(
-    task_id='$TASK_ID',
-    agent_name='$AGENT_NAME', 
-    status='$STATUS',
-    summary='$SUMMARY'
-)
-print('Notification sent')
-"
-'''
+# Shell helper removed - use bin/notify-done.sh instead

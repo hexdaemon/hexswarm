@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -18,91 +19,87 @@ def build_task_context(
 
     Adds a small HexMem-backed cache to avoid re-building similar context bundles.
     """
+    import hashlib
+    
     context_parts = []
+    keywords = _extract_keywords(description)
+    
+    # Cache key includes both task_type, keywords AND description hash for uniqueness
+    desc_hash = hashlib.sha256(description.strip().encode("utf-8")).hexdigest()[:16]
+    key_material = (task_type + "|" + " ".join(keywords) + "|" + desc_hash).encode("utf-8")
+    cache_key = hashlib.sha256(key_material).hexdigest()
 
     try:
-        conn = _connect()
-
-        # Ensure cache table exists
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS hexswarm_context_cache (
-              cache_key TEXT PRIMARY KEY,
-              task_type TEXT NOT NULL,
-              description_hash TEXT NOT NULL,
-              context TEXT NOT NULL,
-              created_at TEXT NOT NULL DEFAULT (datetime('now')),
-              last_used_at TEXT NOT NULL DEFAULT (datetime('now')),
-              use_count INTEGER NOT NULL DEFAULT 0
-            );
-            """
-        )
-
-        # Extract keywords from description
-        keywords = _extract_keywords(description)
-
-        # Cache lookup key: task_type + stable keyword set
-        import hashlib
-        key_material = (task_type + "|" + " ".join(keywords)).encode("utf-8")
-        cache_key = hashlib.sha256(key_material).hexdigest()
-        desc_hash = hashlib.sha256(description.strip().encode("utf-8")).hexdigest()
-
-        row = conn.execute(
-            """
-            SELECT context FROM hexswarm_context_cache
-            WHERE cache_key = ?
-            """,
-            (cache_key,),
-        ).fetchone()
-
-        if row and row[0]:
-            # Update usage counters
+        with _connect() as conn:
+            # Ensure cache table exists
             conn.execute(
                 """
-                UPDATE hexswarm_context_cache
-                SET last_used_at = datetime('now'), use_count = use_count + 1
+                CREATE TABLE IF NOT EXISTS hexswarm_context_cache (
+                  cache_key TEXT PRIMARY KEY,
+                  task_type TEXT NOT NULL,
+                  description_hash TEXT NOT NULL,
+                  context TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                  last_used_at TEXT NOT NULL DEFAULT (datetime('now')),
+                  use_count INTEGER NOT NULL DEFAULT 0
+                );
+                """
+            )
+            conn.commit()
+
+            row = conn.execute(
+                """
+                SELECT context FROM hexswarm_context_cache
                 WHERE cache_key = ?
                 """,
                 (cache_key,),
-            )
-            conn.commit()
-            return row[0]
-        
-        # 1. Get relevant lessons
-        lessons = _get_relevant_lessons(conn, keywords, task_type, max_items)
-        if lessons:
-            context_parts.append("## Relevant Lessons\n" + "\n".join(
-                f"- [{l['domain']}] {l['lesson']}" + (f" (from: {l['context'][:50]}...)" if l['context'] else "")
-                for l in lessons
-            ))
-        
-        # 2. Get related facts about mentioned subjects
-        facts = _get_related_facts(conn, keywords, max_items)
-        if facts:
-            context_parts.append("## Known Facts\n" + "\n".join(
-                f"- {f['subject']} {f['predicate']} {f['object']}"
-                for f in facts
-            ))
-        
-        # 3. Get recent related events
-        events = _get_related_events(conn, keywords, max_items)
-        if events:
-            context_parts.append("## Recent Context\n" + "\n".join(
-                f"- [{e['event_type']}] {e['summary']}"
-                for e in events
-            ))
-        
-        # 4. If files mentioned, get any facts about them
-        if files:
-            file_facts = _get_file_facts(conn, files, max_items)
-            if file_facts:
-                context_parts.append("## File Notes\n" + "\n".join(
-                    f"- {f['file']}: {f['note']}"
-                    for f in file_facts
+            ).fetchone()
+
+            if row and row[0]:
+                # Update usage counters
+                conn.execute(
+                    """
+                    UPDATE hexswarm_context_cache
+                    SET last_used_at = datetime('now'), use_count = use_count + 1
+                    WHERE cache_key = ?
+                    """,
+                    (cache_key,),
+                )
+                conn.commit()
+                return row[0]
+            
+            # 1. Get relevant lessons
+            lessons = _get_relevant_lessons(conn, keywords, task_type, max_items)
+            if lessons:
+                context_parts.append("## Relevant Lessons\n" + "\n".join(
+                    f"- [{l['domain']}] {l['lesson']}" + (f" (from: {l['context'][:50]}...)" if l['context'] else "")
+                    for l in lessons
                 ))
-        
-        # Finalize
-        conn.close()
+            
+            # 2. Get related facts about mentioned subjects
+            facts = _get_related_facts(conn, keywords, max_items)
+            if facts:
+                context_parts.append("## Known Facts\n" + "\n".join(
+                    f"- {f['subject']} {f['predicate']} {f['object']}"
+                    for f in facts
+                ))
+            
+            # 3. Get recent related events (filtered by task type domain)
+            events = _get_related_events(conn, keywords, max_items, task_type)
+            if events:
+                context_parts.append("## Recent Context\n" + "\n".join(
+                    f"- [{e['event_type']}] {e['summary']}"
+                    for e in events
+                ))
+            
+            # 4. If files mentioned, get any facts about them
+            if files:
+                file_facts = _get_file_facts(conn, files, max_items)
+                if file_facts:
+                    context_parts.append("## File Notes\n" + "\n".join(
+                        f"- {f['file']}: {f['note']}"
+                        for f in file_facts
+                    ))
 
     except Exception as e:
         # Don't fail delegation if context building fails
@@ -115,18 +112,17 @@ def build_task_context(
 
     # Best-effort cache write
     try:
-        conn = _connect()
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO hexswarm_context_cache
-              (cache_key, task_type, description_hash, context, last_used_at, use_count)
-            VALUES
-              (?, ?, ?, ?, datetime('now'), COALESCE((SELECT use_count FROM hexswarm_context_cache WHERE cache_key=?),0) + 1)
-            """,
-            (cache_key, task_type, desc_hash, final_context, cache_key),
-        )
-        conn.commit()
-        conn.close()
+        with _connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO hexswarm_context_cache
+                  (cache_key, task_type, description_hash, context, last_used_at, use_count)
+                VALUES
+                  (?, ?, ?, ?, datetime('now'), COALESCE((SELECT use_count FROM hexswarm_context_cache WHERE cache_key=?),0) + 1)
+                """,
+                (cache_key, task_type, desc_hash, final_context, cache_key),
+            )
+            conn.commit()
     except Exception:
         pass
 
@@ -262,22 +258,47 @@ def _get_related_events(
     conn: sqlite3.Connection,
     keywords: List[str],
     limit: int,
+    task_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Get recent events related to the task."""
+    """Get recent events related to the task, optionally filtered by domain."""
     results = []
+    
+    # Domain categories that match task types
+    domain_categories = {
+        'code': ['agent:codex', 'code', 'development', 'programming'],
+        'research': ['agent:gemini', 'research', 'investigation'],
+        'analysis': ['analysis', 'review', 'assessment'],
+    }
+    
+    category_filter = domain_categories.get(task_type, [])
     
     for keyword in keywords[:3]:
         like = f"%{keyword}%"
-        rows = conn.execute(
-            """
-            SELECT event_type, summary, occurred_at
-            FROM events
-            WHERE lower(summary) LIKE ? OR lower(details) LIKE ?
-            ORDER BY occurred_at DESC
-            LIMIT ?
-            """,
-            (like, like, limit),
-        ).fetchall()
+        if category_filter:
+            # Include events matching the domain
+            placeholders = ','.join('?' * len(category_filter))
+            rows = conn.execute(
+                f"""
+                SELECT event_type, summary, occurred_at, category
+                FROM events
+                WHERE (lower(summary) LIKE ? OR lower(details) LIKE ?)
+                   OR category IN ({placeholders})
+                ORDER BY occurred_at DESC
+                LIMIT ?
+                """,
+                (like, like, *category_filter, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT event_type, summary, occurred_at, category
+                FROM events
+                WHERE lower(summary) LIKE ? OR lower(details) LIKE ?
+                ORDER BY occurred_at DESC
+                LIMIT ?
+                """,
+                (like, like, limit),
+            ).fetchall()
         for row in rows:
             event = {'event_type': row[0], 'summary': row[1]}
             if event not in results:
