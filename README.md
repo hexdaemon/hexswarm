@@ -287,7 +287,7 @@ Hexswarm is part of an integrated agent autonomy stack:
 | **hexswarm** | Agent coordination via MCP. Context enrichment, performance routing, shared memory. | [hexdaemon/hexswarm](https://github.com/hexdaemon/hexswarm) |
 | **hexmux** | Tmux orchestration fallback. For agents needing write access or when MCP unavailable. | [hexdaemon/hexmux](https://github.com/hexdaemon/hexmux) |
 | **hexmem** | Structured memory substrate. Identity, lessons, facts, events. Semantic search. | [hexdaemon/hexmem](https://github.com/hexdaemon/hexmem) |
-| **archon-skill** | Decentralized identity operations. DIDs, credentials, vault backups. | [hexdaemon/archon-skill](https://github.com/hexdaemon/archon-skill) |
+| **archon-skill** | Decentralized identity operations. DIDs, credentials, vault backups. | [archetech/agent-skills](https://github.com/archetech/agent-skills) |
 
 ### Data Flow
 
